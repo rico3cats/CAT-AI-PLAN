@@ -97,6 +97,14 @@ let appState = {
 
 // 初始化应用
 function initApp() {
+    // 检测是否为移动设备
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobileDevice) {
+        console.log('检测到移动设备:', navigator.userAgent);
+        // 添加移动设备类，便于CSS适配
+        document.body.classList.add('mobile-device');
+    }
+    
     // 重新获取所有DOM元素，确保页面加载后再获取
     const homePage = document.getElementById('home-page');
     const inputPage = document.getElementById('input-page');
@@ -330,39 +338,69 @@ function initApp() {
 // ————————————————
 // 语音识别相关（没问题，只要 getElementById 写对了，就能跑）
 function setupSpeechRecognition() {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+    // 创建全局对象，方便在其他地方引用
+    let recognition = null;
+    
+    // 检查浏览器是否支持语音识别
+    const isSpeechRecognitionSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+    
+    if (isSpeechRecognitionSupported) {
+        // 初始化语音识别对象
+        recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
         recognition.continuous = false;
         recognition.interimResults = true;
         recognition.lang = 'zh-CN';
+        
+        // 显示语音按钮和提示
+        voiceBtn.style.display = 'block';
+        document.querySelector('.voice-hint').style.display = 'block';
 
+        // 开始录音事件处理
         recognition.onstart = () => {
+            console.log('语音识别开始');
             appState.isRecording = true;
             recordingStatus.textContent = '正在录音...请说出你的计划';
             voiceBtn.classList.add('recording');
+            // 通知用户录音已开始
+            showToast('开始录音');
         };
-        recognition.onend = () => {
-            appState.isRecording = false;
-            recordingStatus.textContent = '录音已结束';
-            voiceBtn.classList.remove('recording');
-        };
+
+        // 语音识别结果处理
         recognition.onresult = event => {
+            console.log('接收到语音结果', event);
             const transcript = Array.from(event.results)
                                   .map(res => res[0].transcript)
                                   .join('');
+            console.log('识别的文字:', transcript);
+            
             // 保存当前的临时语音结果
             appState.currentTranscript = transcript;
             // 展示临时结果
             taskInput.value = appState.existingText + transcript;
         };
+
+        // 语音识别错误处理
         recognition.onerror = event => {
+            console.error('语音识别错误:', event.error);
             appState.isRecording = false;
             recordingStatus.textContent = `录音错误: ${event.error}`;
             voiceBtn.classList.remove('recording');
+            
+            // 显示错误消息
+            let errorMsg = '录音出错';
+            if (event.error === 'not-allowed') {
+                errorMsg = '请允许麦克风权限';
+            } else if (event.error === 'no-speech') {
+                errorMsg = '没有检测到语音';
+            } else if (event.error === 'network') {
+                errorMsg = '网络错误，请检查连接';
+            }
+            showToast(errorMsg);
         };
         
-        // 在录音结束时将临时结果添加到现有文本中
+        // 录音结束事件处理
         recognition.onend = () => {
+            console.log('语音识别结束');
             appState.isRecording = false;
             recordingStatus.textContent = '录音已结束';
             voiceBtn.classList.remove('recording');
@@ -380,19 +418,40 @@ function setupSpeechRecognition() {
             appState.currentTranscript = '';
         };
 
-        voiceBtn.addEventListener('click', () => {
-            if (appState.isRecording) {
-                recognition.stop();
-            } else {
-                // 保存现有文本，稍后会与新识别的文本合并
-                appState.existingText = taskInput.value || '';
-                recognition.start();
+        // 添加点击和触摸事件
+        const startRecognition = () => {
+            try {
+                if (appState.isRecording) {
+                    console.log('停止录音');
+                    recognition.stop();
+                } else {
+                    console.log('开始录音');
+                    // 保存现有文本，稍后会与新识别的文本合并
+                    appState.existingText = taskInput.value || '';
+                    recognition.start();
+                }
+            } catch (e) {
+                console.error('语音识别操作错误:', e);
+                showToast('语音识别启动失败，请重试');
             }
+        };
+
+        // 同时添加点击和触摸事件（针对移动设备）
+        voiceBtn.addEventListener('click', startRecognition);
+        voiceBtn.addEventListener('touchstart', function(e) {
+            e.preventDefault(); // 防止触摸事件引起的点击事件
+            startRecognition();
         });
     } else {
-        voiceBtn.disabled = true;
-        recordingStatus.textContent = '你的浏览器不支持语音识别功能';
+        // 浏览器不支持语音识别
+        console.log('此浏览器不支持语音识别');
+        voiceBtn.style.display = 'none';
+        document.querySelector('.voice-hint').style.display = 'none';
+        recordingStatus.textContent = '您的浏览器不支持语音识别功能';
     }
+    
+    // 将recognition对象保存到全局，以便可以在其他地方使用
+    window.speechRecognition = recognition;
 }
 
 // ————————————————
@@ -807,32 +866,100 @@ function saveCardToStorage() {
     localStorage.setItem('catPlannerCards', JSON.stringify(cards));
 }
 
-// 加载卡片集
+// 加载卡片集 - 按日期分组
 function loadCardCollection() {
     cardCollection.innerHTML = '';
     const cards = JSON.parse(localStorage.getItem('catPlannerCards') || '[]');
+    
     if (cards.length === 0) {
         cardCollection.innerHTML = '<p class="no-cards">还没有保存的卡片</p>';
         return;
     }
+    
+    // 对卡片按日期分组
+    const groupedCards = {};
     cards.forEach((card, idx) => {
-        const div = document.createElement('div');
-        div.className = 'collection-card';
-
-        const date = new Date(card.date).toISOString().split('T')[0];
-        const catImgSrc = card.catImage || catImages[0];
-        div.innerHTML = `
-            <img src="${catImgSrc}" alt="猫咪" class="collection-thumbnail">
-            <div class="collection-info">
-                <div class="collection-date">${date}</div>
-                <div class="collection-tasks">${card.mostImportantTask?.text || ''}</div>
-            </div>
-        `;
-        div.addEventListener('click', () => {
-            showCardDetail(idx);
-        });
-        cardCollection.appendChild(div);
+        const dateStr = new Date(card.date).toISOString().split('T')[0];
+        if (!groupedCards[dateStr]) {
+            groupedCards[dateStr] = [];
+        }
+        // 保存原始索引，以便点击时能找到正确的卡片
+        card.originalIndex = idx;
+        groupedCards[dateStr].push(card);
     });
+    
+    // 按日期降序排列（最新的在前面）
+    const sortedDates = Object.keys(groupedCards).sort((a, b) => {
+        return new Date(b) - new Date(a);
+    });
+    
+    // 为每个日期创建一个分组
+    sortedDates.forEach(date => {
+        // 创建日期标题
+        const dateHeader = document.createElement('div');
+        dateHeader.className = 'date-group-header';
+        
+        // 格式化日期：将 2023-06-15 转换为 6月15日
+        const displayDate = new Date(date);
+        const month = displayDate.getMonth() + 1;
+        const day = displayDate.getDate();
+        const formattedDate = `${month}月${day}日`;
+        dateHeader.innerHTML = `<h3>${formattedDate}</h3>`;
+        cardCollection.appendChild(dateHeader);
+        
+        // 创建该日期下的卡片容器
+        const dateGroup = document.createElement('div');
+        dateGroup.className = 'album-container';
+        
+        // 为该日期下的每张卡片创建元素
+        groupedCards[date].forEach(card => {
+            const cardElement = document.createElement('div');
+            cardElement.className = 'album-card';
+            
+            // 修复图片路径问题：确保使用正确的路径格式
+            let catImageSrc = card.catImage;
+            // 如果存储的路径不包含cat/前缀但应该包含，则添加前缀
+            if (catImageSrc && !catImageSrc.startsWith('cat/') && catImageSrc.includes('cat-image')) {
+                catImageSrc = 'cat/' + catImageSrc;
+            }
+            // 如果没有图片，使用默认图片
+            if (!catImageSrc) {
+                catImageSrc = catImages[0];
+            }
+            
+            // 将修正后的图片路径保存回卡片对象
+            if (catImageSrc !== card.catImage) {
+                card.catImage = catImageSrc;
+                // 稍后会更新localStorage
+            }
+            
+            // 设置卡片内容
+            cardElement.innerHTML = `
+                <div class="album-image-container">
+                    <img src="${catImageSrc}" alt="猫咪" class="album-image">
+                </div>
+                <div class="album-info">
+                    <div class="album-task">
+                        ${card.mostImportantTask ? card.mostImportantTask.text : ''}
+                    </div>
+                </div>
+            `;
+            
+            // 添加点击事件
+            cardElement.addEventListener('click', () => {
+                showCardDetail(card.originalIndex);
+            });
+            
+            // 将卡片添加到日期组
+            dateGroup.appendChild(cardElement);
+        });
+        
+        // 将日期组添加到卡片集
+        cardCollection.appendChild(dateGroup);
+    });
+    
+    // 更新localStorage中的卡片数据，修复所有图片路径
+    localStorage.setItem('catPlannerCards', JSON.stringify(cards));
 }
 
 // 显示卡片详情
@@ -1149,101 +1276,6 @@ function resetAppState() {
     taskInput.value = '';
     reasonInput.value = '';
 }
-// 加载卡片集 - 按日期分组
-function loadCardCollection() {
-    cardCollection.innerHTML = '';
-    const cards = JSON.parse(localStorage.getItem('catPlannerCards') || '[]');
-    
-    if (cards.length === 0) {
-        cardCollection.innerHTML = '<p class="no-cards">还没有保存的卡片</p>';
-        return;
-    }
-    
-    // 对卡片按日期分组
-    const groupedCards = {};
-    cards.forEach((card, idx) => {
-        const dateStr = new Date(card.date).toISOString().split('T')[0];
-        if (!groupedCards[dateStr]) {
-            groupedCards[dateStr] = [];
-        }
-        // 保存原始索引，以便点击时能找到正确的卡片
-        card.originalIndex = idx;
-        groupedCards[dateStr].push(card);
-    });
-    
-    // 按日期降序排列（最新的在前面）
-    const sortedDates = Object.keys(groupedCards).sort((a, b) => {
-        return new Date(b) - new Date(a);
-    });
-    
-    // 为每个日期创建一个分组
-    sortedDates.forEach(date => {
-        // 创建日期标题
-        const dateHeader = document.createElement('div');
-        dateHeader.className = 'date-group-header';
-        
-        // 格式化日期：将 2023-06-15 转换为 6月15日
-        const displayDate = new Date(date);
-        const month = displayDate.getMonth() + 1;
-        const day = displayDate.getDate();
-        const formattedDate = `${month}月${day}日`;
-        dateHeader.innerHTML = `<h3>${formattedDate}</h3>`;
-        cardCollection.appendChild(dateHeader);
-        
-        // 创建该日期下的卡片容器
-        const dateGroup = document.createElement('div');
-        dateGroup.className = 'album-container';
-        
-        // 为该日期下的每张卡片创建元素
-        groupedCards[date].forEach(card => {
-            const cardElement = document.createElement('div');
-            cardElement.className = 'album-card';
-            
-            // 修复图片路径问题：确保使用正确的路径格式
-            let catImageSrc = card.catImage;
-            // 如果存储的路径不包含cat/前缀但应该包含，则添加前缀
-            if (catImageSrc && !catImageSrc.startsWith('cat/') && catImageSrc.includes('cat-image')) {
-                catImageSrc = 'cat/' + catImageSrc;
-            }
-            // 如果没有图片，使用默认图片
-            if (!catImageSrc) {
-                catImageSrc = catImages[0];
-            }
-            
-            // 将修正后的图片路径保存回卡片对象
-            if (catImageSrc !== card.catImage) {
-                card.catImage = catImageSrc;
-                // 稍后会更新localStorage
-            }
-            
-            // 设置卡片内容
-            cardElement.innerHTML = `
-                <div class="album-image-container">
-                    <img src="${catImageSrc}" alt="猫咪" class="album-image">
-                </div>
-                <div class="album-info">
-                    <div class="album-task">
-                        ${card.mostImportantTask ? card.mostImportantTask.text : ''}
-                    </div>
-                </div>
-            `;
-            
-            // 添加点击事件
-            cardElement.addEventListener('click', () => {
-                showCardDetail(card.originalIndex);
-            });
-            
-            // 将卡片添加到日期组
-            dateGroup.appendChild(cardElement);
-        });
-        
-        // 将日期组添加到卡片集
-        cardCollection.appendChild(dateGroup);
-    });
-    
-    // 更新localStorage中的卡片数据，修复所有图片路径
-    localStorage.setItem('catPlannerCards', JSON.stringify(cards));
-}
 
 // 显示提示消息
 function showToast(message) {
@@ -1264,8 +1296,56 @@ function showToast(message) {
     }, 3000);
 }
 
+// 专门处理移动设备上的语音识别问题
+function handleMobileSpeechIssues() {
+    // 检测是否为iOS设备
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    
+    if (isIOS) {
+        console.log('检测到iOS设备，使用特殊处理');
+        
+        // 为语音按钮添加特殊样式，使其更容易点击
+        const voiceBtn = document.getElementById('voice-btn');
+        if (voiceBtn) {
+            voiceBtn.classList.add('ios-voice-btn');
+            
+            // iOS设备上，添加额外的事件监听器
+            voiceBtn.addEventListener('touchend', function(e) {
+                e.preventDefault();
+                console.log('iOS触摸结束事件');
+                
+                // 尝试在触摸结束时强制启动语音识别
+                if (window.speechRecognition && !appState.isRecording) {
+                    try {
+                        appState.existingText = document.getElementById('task-input').value || '';
+                        window.speechRecognition.start();
+                        showToast('开始语音输入...');
+                    } catch (err) {
+                        console.error('iOS语音识别启动失败:', err);
+                        showToast('语音识别启动失败，请重试');
+                    }
+                }
+            });
+        }
+        
+        // 为输入框添加特殊处理，确保键盘不会遮挡视图
+        const taskInput = document.getElementById('task-input');
+        if (taskInput) {
+            taskInput.addEventListener('focus', function() {
+                // 滚动到可见区域
+                setTimeout(function() {
+                    taskInput.scrollIntoView({behavior: 'smooth', block: 'center'});
+                }, 300);
+            });
+        }
+    }
+}
+
 // 将showToast函数暴露给全局
 window.showToast = showToast;
 
-// DOMContentLoaded 时初始化
-document.addEventListener('DOMContentLoaded', initApp);
+// 在页面加载完成后，初始化应用并处理移动设备特殊问题
+document.addEventListener('DOMContentLoaded', function() {
+    initApp();
+    handleMobileSpeechIssues();
+});

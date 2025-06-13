@@ -97,6 +97,15 @@ let appState = {
 
 // 初始化应用
 function initApp() {
+    // 防止重复初始化
+    if (window._appInitialized) {
+        console.log('应用已初始化，跳过重复初始化');
+        return;
+    }
+    
+    console.log('开始初始化应用');
+    window._appInitialized = true;
+    
     // 检测是否为移动设备
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isMobileDevice) {
@@ -868,11 +877,21 @@ function saveCardToStorage() {
 
 // 加载卡片集 - 按日期分组
 function loadCardCollection() {
+    // 防止重复加载
+    if (window._isLoadingCards) {
+        console.log('卡片加载中，跳过重复调用');
+        return;
+    }
+    
+    window._isLoadingCards = true;
+    console.log('开始加载卡片集');
+    
     cardCollection.innerHTML = '';
     const cards = JSON.parse(localStorage.getItem('catPlannerCards') || '[]');
     
     if (cards.length === 0) {
         cardCollection.innerHTML = '<p class="no-cards">还没有保存的卡片</p>';
+        window._isLoadingCards = false;
         return;
     }
     
@@ -960,12 +979,27 @@ function loadCardCollection() {
     
     // 更新localStorage中的卡片数据，修复所有图片路径
     localStorage.setItem('catPlannerCards', JSON.stringify(cards));
+    
+    window._isLoadingCards = false;
+    console.log('卡片集加载完成');
 }
 
 // 显示卡片详情
 function showCardDetail(index) {
+    // 防止重复显示
+    if (window._isShowingCardDetail) {
+        console.log('正在显示卡片详情，跳过重复调用');
+        return;
+    }
+    
+    window._isShowingCardDetail = true;
+    console.log('显示卡片详情:', index);
+    
     const cards = JSON.parse(localStorage.getItem('catPlannerCards') || '[]');
-    if (index < 0 || index >= cards.length) return;
+    if (index < 0 || index >= cards.length) {
+        window._isShowingCardDetail = false;
+        return;
+    }
     const card = cards[index];
     appState.currentCardIndex = index;
 
@@ -994,6 +1028,11 @@ function showCardDetail(index) {
     
     // 更新localStorage中的卡片数据
     localStorage.setItem('catPlannerCards', JSON.stringify(cards));
+    
+    // 延迟重置状态标记，避免快速重复点击
+    setTimeout(() => {
+        window._isShowingCardDetail = false;
+    }, 500);
 }
 
 // 在详情里插入任务，并且绑定复选逻辑，同步到 localStorage
